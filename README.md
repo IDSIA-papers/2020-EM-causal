@@ -1,17 +1,13 @@
-# EM and causality
+# EM Based Bounding of Unidentifiable Queries in Structural Causal Models
 
-Here we provide the relevant code for the manuscript entitled ...
-The code is organised as follows.
+Here we provide the relevant code for the manuscript entitled "EM Based Bounding of Unidentifiable Queries in Structural Causal Models" and submitted to NeurIPS 2020 Workshop on Causal Discovery & Causality-Inspired Machine Learning
+The repository is organised as follows.
 
 - [./examples](examples) contains java files with the examples
 shown in the paper.
 
 - [./experiments](experiments) contains the jupyter notebooks for reproducing
 the numerical tests given.
-
-
-## Run code examples
-
 
 
 ## Run experiments
@@ -23,17 +19,5 @@ folder. For running them, start a jupyter server with the command below and then
 python -m jupyter notebook .
 ```
 
-
-
 _Requirements_: python3 and packages in requirements.txt (pip install -r requirements.txt)
 
-
-## Citation
-
-Pre-print version: https://arxiv.org/...
-
-```
-@InProceedings{zaffalon2020structural,
-
-}
-```

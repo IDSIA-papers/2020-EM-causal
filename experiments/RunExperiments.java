@@ -2,6 +2,7 @@ package neurnips20.experiments;
 
 import ch.idsia.credici.IO;
 import ch.idsia.credici.inference.CausalVE;
+import ch.idsia.credici.inference.CredalCausalApproxLP;
 import ch.idsia.credici.inference.CredalCausalVE;
 import ch.idsia.credici.model.StructuralCausalModel;
 import ch.idsia.crema.data.WriterCSV;
@@ -12,6 +13,7 @@ import ch.idsia.crema.factor.credal.linear.IntervalFactor;
 import ch.idsia.crema.factor.credal.vertex.VertexFactor;
 import ch.idsia.crema.learning.ExpectationMaximization;
 import ch.idsia.crema.model.ObservationBuilder;
+import ch.idsia.crema.model.Strides;
 import ch.idsia.crema.model.graphical.SparseModel;
 import ch.idsia.crema.model.graphical.specialized.BayesianNetwork;
 import ch.idsia.crema.user.credal.Vertex;
@@ -40,6 +42,11 @@ public class RunExperiments {
     static int samples = 2000;
     static  TIntIntMap[] data;
 
+    static int EMiter[];
+    static double EMtime[];
+    static double UQtime[];
+    static double CNtime[];
+
     static int target;
     static TIntIntMap intervention;
     static TIntIntMap obs;
@@ -48,7 +55,11 @@ public class RunExperiments {
     static BayesianNetwork[] bnets;
     static VertexFactor exactRes;
 
+    static IntervalFactor ALPres;
+
     static Map<Integer, Map<String, Double>> results;
+
+    static boolean filterNonConverging = false;
 
     public static void main(String[] args) {
 
@@ -101,6 +112,12 @@ public class RunExperiments {
 
         ifactors = new IntervalFactor[numberPoints];
         bnets = new BayesianNetwork[numberPoints];
+        EMiter = new int[numberPoints];
+
+        EMtime = new double[numberPoints];
+        UQtime = new double[numberPoints];
+        CNtime = new double[numberPoints];
+
 
     }
 
@@ -110,6 +127,17 @@ public class RunExperiments {
         // Compute the exact results
         CredalCausalVE inf = new CredalCausalVE(causalModel);
         exactRes = (VertexFactor) inf.causalQuery().setTarget(target).setIntervention(intervention).run();
+
+        CredalCausalApproxLP inf2 = new CredalCausalApproxLP(causalModel);
+        ALPres = (IntervalFactor) inf2.causalQuery()
+                .setTarget(target).setIntervention(intervention).run();
+
+
+
+
+        System.out.println(exactRes);
+        //System.out.println(inf.getModel().getFactor(5));
+
 
         // Approximate EM-based methods
         for(int i=0; i<numberPoints; i++) {
@@ -124,25 +152,45 @@ public class RunExperiments {
             ExpectationMaximization em =
                     new ExpectationMaximization(rmodel)
                             .setVerbose(false)
-                            //.setRegularization(0.000000001)
+                            .setRegularization(0.0)
+                            .setRecordIntermediate(false)
                             .setVerbose(true)
+                            .setStopAtConvergence(true)
+                            .setKlthreshold(0.00001)
+                            //.setKlthreshold(0.0000001)
                             .setTrainableVars(causalModel.getExogenousVars());
 
 
             // run the method
+            long t = System.currentTimeMillis();
             em.run(data, numberEMiter);
 
-            // Extract the learnt model
-            StructuralCausalModel postModel = (StructuralCausalModel) em.getPosterior();
-            System.out.println(postModel);
 
-            bnets[i] = postModel.toBnet();
+            if (em.getPerformedIterations()<numberEMiter) {
+                EMtime[i] = System.currentTimeMillis() - t;
 
-            //postModel.getEmpiricalNet().logProb(data); // problem with zeros
-            // Run the  query
-            CausalVE ve = new CausalVE(postModel);
-            ifactors[i] = new BayesianToInterval().apply(ve.doQuery(target, intervention), target);
-            System.out.println(ifactors[i]);
+                //em.getIntermediateModels().stream().forEach(m->System.out.println(m.getFactor(5)));
+
+                // Extract the learnt model
+                StructuralCausalModel postModel = (StructuralCausalModel) em.getPosterior();
+                System.out.println(postModel);
+
+                bnets[i] = postModel.toBnet();
+
+                //postModel.getEmpiricalNet().logProb(data); // problem with zeros
+                // Run the  query
+                t = System.nanoTime();
+                CausalVE ve = new CausalVE(postModel);
+                ifactors[i] = new BayesianToInterval().apply(ve.doQuery(target, intervention), target);
+                UQtime[i] = (System.nanoTime() - t) / 1000000.0;
+                EMiter[i] = em.getPerformedIterations();
+                System.out.println(ifactors[i]);
+
+            }else{
+                System.out.println("non converging");
+                i = i-1;
+            }
+
         }
 
     }
@@ -173,7 +221,7 @@ public class RunExperiments {
             numberPoints = Integer.parseInt(cmd.getOptionValue("numberPoints"));
             if(cmd.hasOption("numberEMiter")) numberEMiter = Integer.parseInt(cmd.getOptionValue("numberEMiter"));
             if(cmd.hasOption("samples")) samples = Integer.parseInt(cmd.getOptionValue("samples"));
-
+            filterNonConverging = cmd.hasOption("filterNonConverging");
 
         }
 
@@ -192,6 +240,8 @@ public class RunExperiments {
         options.addOption(Option.builder("n").longOpt("numberEMiter").hasArg(true).required(false).build());
         options.addOption(Option.builder("s").longOpt("samples").hasArg(true).required(false).build());
         options.addOption(Option.builder("m").longOpt("model").hasArg(true).required().build());
+        options.addOption(Option.builder("f").longOpt("filterNonConverging").hasArg(false).required(false).build());
+
 
         return options;
 
@@ -199,9 +249,12 @@ public class RunExperiments {
 
 
     public static void buildResults() throws InterruptedException {
+        long t;
 
         // true result
-        Map exactRes_ = intervalToDict("Ptrue", new VertexToInterval().apply(exactRes, target));
+        IntervalFactor exactInterval = new VertexToInterval().apply(exactRes, target);
+        Map exactRes_ = intervalToDict("Ptrue", exactInterval);
+        Map ALPres_ = intervalToDict("Paplp", ALPres);
 
         //EM-based results
         for(int i=1; i<=numberPoints; i++){
@@ -209,26 +262,70 @@ public class RunExperiments {
             //Store the numberOfPoints
             results.get(i).put("num_points", (double)i);
 
+            //Store the numberOfPoints
+            results.get(i).put("em_iter", (double) EMiter[i-1]);
+
             // Store the exact result
             results.get(i).putAll(exactRes_);
 
-            // Queries union
-            IntervalFactor queriesUnion =
-                IntervalFactor.mergeBounds(
-                        IntStream.range(0,i).mapToObj(k -> ifactors[k]).toArray(IntervalFactor[]::new)
+            // Store the ALP result
+            results.get(i).putAll(ALPres_);
+
+            // causal query is inside
+            boolean inside = exactInterval.isInside(new BayesianFactor(ifactors[i-1].getDomain(), Doubles.concat(ifactors[i-1].getDataLower())));
+            if(inside) results.get(i).put("inside", 1.0);
+            else results.get(i).put("inside", 0.0);
+
+            results.get(i).put("precise0", ifactors[i-1].getDataLower()[0][0]);
+            results.get(i).put("precise1", ifactors[i-1].getDataLower()[0][1]);
+
+
+            // get the converging i
+            IntStream I = IntStream.range(0, i).filter(k -> !filterNonConverging || EMiter[k] < numberEMiter);
+
+            IntervalFactor puq, pcn;
+
+            double[][] values = new double[][]{IntStream.range(0, causalModel.getSize(target)).mapToDouble(k -> -1).toArray()};
+            puq = new IntervalFactor(causalModel.getDomain(target), Strides.empty(), values, values);
+            pcn = new IntervalFactor(causalModel.getDomain(target), Strides.empty(), values, values);
+
+
+
+            if(I.count()>0) {
+                // Queries union
+
+                t = System.nanoTime();
+                puq =
+                        IntervalFactor.mergeBounds(
+                                IntStream.range(0, i).mapToObj(k -> ifactors[k]).toArray(IntervalFactor[]::new)
+                        );
+
+                long t2 =  System.nanoTime();
+                UQtime[i-1] += (t2 - t)/ 1000000.0;
+
+
+                // Credal network
+                t = System.nanoTime();
+
+                SparseModel composed = VertexFactor.buildModel(true,
+                        IntStream.range(0, i).mapToObj(k -> bnets[k]).toArray(BayesianNetwork[]::new)
                 );
 
-            results.get(i).putAll(intervalToDict("Puq", queriesUnion));
+                CredalCausalVE credalVE = new CredalCausalVE(composed);
+                VertexFactor res = (VertexFactor) credalVE.causalQuery().setIntervention(intervention).setTarget(target).run();
+                pcn = new VertexToInterval().apply(res, target);
+                CNtime[i-1] += (System.nanoTime() - t)/ 1000000.0;
 
-            // Credal network
-            SparseModel composed = VertexFactor.buildModel(true,
-                    IntStream.range(0,i).mapToObj(k -> bnets[k]).toArray(BayesianNetwork[]::new)
-            );
+            }
 
-            CredalCausalVE credalVE = new CredalCausalVE(composed);
-            VertexFactor res = (VertexFactor) credalVE.causalQuery().setIntervention(intervention).setTarget(target).run();
+            results.get(i).putAll(intervalToDict("Puq", puq));
+            results.get(i).putAll(intervalToDict("Pcn", pcn));
 
-            results.get(i).putAll(intervalToDict("Pcn", new VertexToInterval().apply(res, target)));
+            results.get(i).put("em_time",  EMtime[i-1]);
+            results.get(i).put("uq_time",  UQtime[i-1]);
+            results.get(i).put("cn_time",  CNtime[i-1]);
+
+
         }
     }
 

@@ -24,13 +24,18 @@ public class ModelGen {
 
     public static void main(String[] args) throws InterruptedException {
 
-        genModels("tree", 4);
-        genModels("poly", 4);
-        //genModels("multy", 4);
+       // genModels("tree", 4);
+       // genModels("poly", 4);
 
-        genModels("tree", 6);
-        genModels("poly", 6);
-        //genModels("multy", 6);
+        //genModels("tree", 6);
+        //genModels("poly", 6);
+
+        genModels("tree", 8);
+        genModels("poly", 8);
+
+        genModels("tree", 10);
+        genModels("poly", 10);
+
     }
 
 
